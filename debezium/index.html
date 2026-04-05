@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Тонкости Kafka Connect и&nbsp;Debezium</title>
+    <meta name="description" content="Практические заметки по Kafka Connect и Debezium: настройки, проблемы сетевой связности, TOAST, heartbeat и бэкфиллинг." />
+    <link rel="icon" href="/debezium/assets/icon_dbzm.png" type="image/png" />
+    <meta property="og:title" content="Тонкости Kafka Connect и Debezium" />
+    <meta property="og:description" content="Практические заметки по Kafka Connect и Debezium: настройки, проблемы сетевой связности, TOAST, heartbeat и бэкфиллинг." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://ilssaf.github.io/debezium/" />
+    <meta property="og:image" content="https://ilssaf.github.io/debezium/assets/debezium_pokemon.png" />
+    <meta property="og:image:alt" content="Debezium Pokemon" />
+    <meta property="og:image:width" content="2788" />
+    <meta property="og:image:height" content="1063" />
+    <meta property="og:image:type" content="image/png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://ilssaf.github.io/debezium/assets/debezium_pokemon.png" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Manrope:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="page">
+      <a class="profile-link" href="../index.html" aria-label="Перейти в профиль">
+        <span class="profile-link__icon" aria-hidden="true">⌂</span>
+        Профиль
+      </a>
+      <header class="hero">
+        <div class="hero__content">
+          <div class="eyebrow">Инженерные заметки</div>
+          <h1>Тонкости Kafka&nbsp;Connect и&nbsp;Debezium</h1>
+          <p class="lead">
+            Практические наблюдения по&nbsp;работе Kafka Connect и&nbsp;Debezium с&nbsp;PostgreSQL: от&nbsp;настройки репликации до&nbsp;мониторинга и&nbsp;бэкфиллинга.
+          </p>
+          <div class="chips">
+            <span>Kafka Connect</span>
+            <span>Debezium</span>
+            <span>PostgreSQL</span>
+            <span>CDC</span>
+          </div>
+        </div>
+        <div class="hero__visual" aria-hidden="true">
+          <img src="./assets/debezium.png" alt="" />
+          <div class="hero__glow"></div>
+        </div>
+      </header>
+
+      <nav class="toc" aria-label="Содержание">
+        <h2 class="toc__title">Содержание</h2>
+        <ul>
+          <li><a href="#kafka-connect">Kafka Connect</a></li>
+          <li><a href="#debezium">Debezium</a></li>
+          <li><a href="#postgresql">PostgreSQL</a></li>
+          <li><a href="#replication-setup">Настройка источника перед репликацией</a></li>
+          <li><a href="#network-loss">Потеря сетевой связности</a></li>
+          <li><a href="#toast">TOAST столбец</a></li>
+          <li><a href="#connector-health">Гарантия корректной работы коннектора</a></li>
+          <li><a href="#backfilling">Бэкфиллинг</a></li>
+          <li><a href="#bonus">БОНУС: CLI для&nbsp;управления коннекторами</a></li>
+        </ul>
+      </nav>
+
+      <main class="content">
+        <section id="kafka-connect">
+          <h2>Kafka Connect</h2>
+          <p>
+            Kafka Connect — open-source инструмент, который позволяет переносить данные между Kafka<sup id="fnref-1"><a href="#fn-1">1</a></sup>
+            и&nbsp;другими системами в&nbsp;формате real-streaming<sup id="fnref-2"><a href="#fn-2">2</a></sup>.
+          </p>
+          <p>
+            В&nbsp;эпоху BigData real-streaming стал очень востребованным для&nbsp;аналитики, благодаря чему Kafka и&nbsp;Kafka Connect
+            появились и&nbsp;стали набирать популярность. Сейчас крайне редко можно увидеть вакансию на&nbsp;специалиста, работающего
+            с&nbsp;данными, где в&nbsp;требуемых технологиях не&nbsp;будет Kafka.
+          </p>
+          <p>Kafka Connect состоит из&nbsp;двух видов коннекторов:</p>
+          <ol>
+            <li>Source Connector — коннектор, который пишет в&nbsp;Kafka из&nbsp;внешнего источника данных.</li>
+            <li>Sink Connector — коннектор, который пишет во внешний источник данных из&nbsp;Kafka.</li>
+          </ol>
+          <figure class="card">
+            <img src="./assets/kafka-connect.png" alt="Схема Kafka Connect" />
+            <figcaption>Упрощенная схема потоков в&nbsp;Kafka Connect.</figcaption>
+          </figure>
+        </section>
+
+        <section id="debezium">
+          <h2>Debezium</h2>
+          <figure class="card">
+            <img src="./assets/debezium_in_action.png" alt="CDC на практике" />
+            <figcaption>Debezium на&nbsp;практике</figcaption>
+          </figure>
+          <p>
+            Debezium (в&nbsp;разговоре “дебез”) — коннекторы, позволяющие читать изменения данных (CDC)<sup id="fnref-3"><a href="#fn-3">3</a></sup>
+            в&nbsp;режиме real-stream. Как правило, это источники под&nbsp;протоколом JDBC<sup id="fnref-4"><a href="#fn-4">4</a></sup>.
+          </p>
+        </section>
+
+        <section id="postgresql">
+          <h2>PostgreSQL</h2>
+          <p>
+            Ниже пункты будут касаться работы СУБД PostgreSQL с&nbsp;Debezium. Решения были выявлены опытным путем и&nbsp;необязательно являются стопроцентными.
+          </p>
+        </section>
+
+        <section id="replication-setup">
+          <h2>Настройка источника перед репликацией</h2>
+          <p>Перед началом репликации из&nbsp;PostgreSQL нужно выполнить следующие действия:</p>
+          <ul>
+            <li>
+              <code>max_slot_wal_keep_size</code> задаёт лимит WAL, который держится для&nbsp;репликационных слотов (в&nbsp;МБ). Если
+              лимит превышен, слот могут выключить, а&nbsp;старые WAL удалятся. Значение <code>-1</code> — без&nbsp;лимита, и&nbsp;при
+              отсутствии читателя WAL может разрастись до&nbsp;заполнения диска. Отдельно проверь <code>max_wal_size</code>: это
+              порог для&nbsp;чекпойнта, а&nbsp;не&nbsp;жёсткий лимит WAL. Он не&nbsp;остановит рост WAL при&nbsp;сильном отставании слота, но
+              влияет на&nbsp;частоту чекпойнтов и&nbsp;переработку сегментов.
+            </li>
+            <li>Создать публикацию и&nbsp;добавить туда необходимые таблицы.</li>
+          </ul>
+          <pre><code class="language-sql">CREATE PUBLICATION &lt;publication_name&gt; FOR TABLE
+&lt;table1&gt;,
+&lt;table2&gt;,
+…
+&lt;tableN&gt;;</code></pre>
+
+          <ul>
+            <li>
+              (опционально) Настроить <code>Replica Identity</code> — оно отвечает за&nbsp;то, какие события отправлять и&nbsp;насколько
+              глубоко.
+            </li>
+          </ul>
+          <div class="callout">
+            <p><strong>Replica Identity:</strong></p>
+            <p><code>DEFAULT</code> — отправляет create, update, delete, но&nbsp;в&nbsp;UPDATE только новое значение (без&nbsp;old state).</p>
+            <p><code>FULL</code> — как DEFAULT, но&nbsp;включает предыдущее состояние (старые значения строк).</p>
+            <p><code>INDEX</code> — использует уникальный индекс, указанный для&nbsp;репликации (минимальный набор ключей).</p>
+            <p><code>NOTHING</code> — в&nbsp;UPDATE/DELETE не&nbsp;передает ключи строки (обычно не&nbsp;подходит для&nbsp;CDC).</p>
+          </div>
+          <pre><code class="language-sql">ALTER TABLE &lt;table&gt; REPLICA IDENTITY FULL;</code></pre>
+
+          <ul>
+            <li>Создать <code>heartbeat</code> таблицу.</li>
+          </ul>
+          <pre><code class="language-sql">CREATE TABLE IF NOT EXISTS debezium.heartbeat(
+  id INT,
+  last_update TIMESTAMPTZ DEFAULT current_timestamp,
+  CHECK (id=1), PRIMARY KEY (id)
+  );</code></pre>
+          <p>В&nbsp;этом случае всегда одна запись, у&nbsp;которой будет меняться поле <code>last_update</code>.</p>
+
+          <ul>
+            <li>Создать сигнальную таблицу.</li>
+          </ul>
+          <pre><code class="language-sql">CREATE TABLE IF NOT EXISTS debezium.signal(
+  id VARCHAR(42) PRIMARY KEY,
+  type VARCHAR(32) NOT NULL,
+  data VARCHAR(2048) NULL
+  );</code></pre>
+        </section>
+
+        <section id="network-loss">
+          <h2>Потеря сетевой связности</h2>
+          <p>
+            Это проблема номер один: Debezium-коннектор чаще всего падает из-за&nbsp;этого. Чтобы это предотвратить, достаточно
+            перезагрузить коннектор при&nbsp;условии, что сетевая связность восстановилась. По&nbsp;умолчанию коннектор не&nbsp;перезапускается после падения, чтобы он пытался перезапускаться, нужно настроить следующие параметры:
+          </p>
+          <pre><code class="language-json">"errors.log.enable": true,
+"errors.log.include.messages": true,
+"errors.max.retries": 15,
+"errors.retry.delay.initial.ms": 1000,
+"errors.retry.delay.max.ms": 10000,
+"errors.retry.timeout": -1,
+"errors.tolerance": "none",</code></pre>
+        </section>
+
+        <section id="toast">
+          <h2>TOAST столбец</h2>
+          <p>
+            Если вы работали с&nbsp;репликацией таблиц, в&nbsp;которых есть столбец с&nbsp;очень большим значением (чаще всего JSON),
+            скорее всего встречались со значением <strong>debezium_unavailable_value</strong>.
+          </p>
+          <p>Если коротко, то&nbsp;решается просто:</p>
+          <pre><code class="language-sql">ALTER TABLE &lt;schema&gt;.&lt;table&gt; REPLICA IDENTITY FULL</code></pre>
+          <p>
+            Но&nbsp;в&nbsp;этом случае размер WAL увеличится в&nbsp;два раза, перед этим проверьте параметры
+            <code>max_slot_wal_keep_size</code> и&nbsp;<code>max_wal_size</code>.
+          </p>
+          <p>
+            Если что, решение с&nbsp;этой <a href="https://www.morling.dev/blog/backfilling-postgres-toast-columns-debezium-change-events/" target="_blank" rel="noreferrer">статьи</a> у&nbsp;меня не&nbsp;взлетело — привело к&nbsp;росту WAL и&nbsp;потере репликационного слота.
+          </p>
+        </section>
+
+        <section id="connector-health">
+          <h2>Гарантия корректной работы коннектора</h2>
+          <p>
+            Чтобы гарантировать корректную работу коннектора, статуса “Running” недостаточно, так как может быть так:
+            статус зеленый, но&nbsp;репликация не&nbsp;работает. Гарантом здесь выступает heartbeat-топик, который N раз в&nbsp;минуту
+            пишет в&nbsp;топик, то&nbsp;есть нужно проверять свежесть сообщений (можно использовать Grafana).
+          </p>
+          <p>Параметры, которые отвечают за&nbsp;настройку heartbeat:</p>
+          <pre><code class="language-json">"heartbeat.action.query": "INSERT INTO debezium.heartbeat(id) VALUES(1) ON CONFLICT(id) DO UPDATE SET last_update=now();",
+"heartbeat.interval.ms": 10000</code></pre>
+          <p>
+            В&nbsp;этом случае каждые 10 секунд в&nbsp;heartbeat-топик будет записываться сообщение, при&nbsp;отсутствии сообщений больше
+            чем 5 минут — можно бить тревогу.
+          </p>
+        </section>
+
+        <section id="backfilling">
+          <h2>Бэкфиллинг</h2>
+          <p>
+            Часто бывает, что появилась возможность перезагрузить таблицу или&nbsp;какой-то&nbsp;интервал. Самый легкий и&nbsp;быстрый
+            способ — использовать сигналы. Чтобы использовать их, нужно создать таблицу (DDL выше). И&nbsp;указать следующие
+            параметры:
+          </p>
+          <pre><code class="language-json">{
+  "signal.consumer.sasl.jaas.config": "org.apache.kafka.common.security.scram.ScramLoginModule required username='secret' password='secret';",
+  "signal.consumer.sasl.mechanism": "SCRAM-SHA-512",
+  "signal.consumer.security.protocol": "SASL_SSL",
+  "signal.consumer.ssl.truststore.location": "path_to_certificate",
+  "signal.consumer.ssl.truststore.type": "PEM",
+  "signal.data.collection": "debezium.signal",
+  "signal.enabled.channels": "source,kafka",
+  "signal.kafka.bootstrap.servers": "server1:9090,server2:9090,server3:9090",
+  "signal.kafka.topic": "&lt;service_name&gt;.signal_topic"
+}</code></pre>
+          <p>После этого в&nbsp;сигнальный топик <code>&lt;service_name&gt;.signal_topic</code> отправить сообщение:</p>
+          <pre><code class="language-json">{
+  "type": "execute-snapshot",
+  "data": {
+    "data-collections": [
+      "public.table1",
+      "public.table2"
+    ],
+    "type": "INCREMENTAL",
+    "additional-conditions": [
+      {
+        "data-collection": "public.table1",
+        "filter": "updated_at BETWEEN '2026-03-20 16:00:00' AND '2026-03-20 18:00:00'"
+      }
+    ]
+  }
+}</code></pre>
+        </section>
+
+        <section id="bonus">
+          <h2>БОНУС: CLI для&nbsp;управления коннекторами</h2>
+          <p>
+            В&nbsp;качестве крутой находки хочу поделиться инструментом, с&nbsp;которым можно легко управлять коннекторами Kafka
+            Connect — <a href="https://github.com/kcctl/kcctl" target="_blank" rel="noreferrer">kcctl</a>.
+          </p>
+          <figure class="card">
+            <img src="./assets/kcctl.png" alt="kcctl CLI" />
+            <figcaption>kcctl позволяет управлять конфигами и&nbsp;статусами коннекторов быстрее, чем через REST API.</figcaption>
+          </figure>
+          <p>
+            В&nbsp;kcctl можно менять конфиги сразу в&nbsp;нескольких коннекторах с&nbsp;помощью регулярных выражений в&nbsp;названии
+            коннектора, смотреть статусы коннекторов, создавать коннекторы. Мне кажется, это удобнее, чем использовать REST
+            API или&nbsp;UI (если это касается каких-то&nbsp;манипуляций, а&nbsp;не&nbsp;просмотра).
+          </p>
+        </section>
+
+        <section class="footnotes">
+          <h2>Сноски</h2>
+          <ol>
+            <li id="fn-1">
+              Kafka — open-source распределенная платформа, предназначенная для&nbsp;обмена сообщениями в&nbsp;реальном времени.
+              <a href="#fnref-1" aria-label="Вернуться к ссылке 1">↩</a>
+            </li>
+            <li id="fn-2">
+              real-streaming — потоковая передача данных в&nbsp;реальном времени.
+              <a href="#fnref-2" aria-label="Вернуться к ссылке 2">↩</a>
+            </li>
+            <li id="fn-3">
+              CDC — Change Data Capture — захват изменений данных, в&nbsp;каждом источнике реализован по-разному, например,
+              PostgreSQL пишет изменения данных в&nbsp;WAL-лог. Основные плюсы CDC — чтение не&nbsp;напрямую из&nbsp;таблицы, что сильно
+              снижает нагрузку на&nbsp;базу и&nbsp;повышает консистентность, так как в&nbsp;качестве изменения пишутся все операции CRUD
+              (create, update, delete).
+              <a href="#fnref-3" aria-label="Вернуться к ссылке 3">↩</a>
+            </li>
+            <li id="fn-4">
+              JDBC — Java Database Connectivity — единый интерфейс для&nbsp;взаимодействия с&nbsp;источниками данных, такими как
+              MySQL, PostgreSQL и&nbsp;т. д.
+              <a href="#fnref-4" aria-label="Вернуться к ссылке 4">↩</a>
+            </li>
+          </ol>
+        </section>
+      </main>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script>
+      hljs.highlightAll();
+    </script>
+  </body>
+</html>
